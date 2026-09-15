@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ausencia_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ausencia_rh}
+      POSTGRES_USER: ${POSTGRES_USER:-ausencia_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ausencia_pass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ausencia_user} -d ${POSTGRES_DB:-ausencia_rh}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ausencia_net
+
+  admin_service:
+    build:
+      context: ./admin_service
+    container_name: ausencia_admin
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-ausencia_user}:${POSTGRES_PASSWORD:-ausencia_pass}@db:5432/${POSTGRES_DB:-ausencia_rh}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./admin_service:/app
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
+    networks:
+      - ausencia_net
+
+  api_service:
+    build:
+      context: ./api_service
+    container_name: ausencia_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ausencia_user}:${POSTGRES_PASSWORD:-ausencia_pass}@db:5432/${POSTGRES_DB:-ausencia_rh}
+    depends_on:
+      db:
+        condition: service_healthy
+      admin_service:
+        condition: service_started
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./api_service:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - ausencia_net
+
+volumes:
+  pg_data:
+
+networks:
+  ausencia_net:
+    driver: bridge
